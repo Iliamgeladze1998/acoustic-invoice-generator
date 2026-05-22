@@ -12,6 +12,7 @@ from typing import Any
 
 import aiohttp
 import openpyxl
+from openpyxl.drawing.image import Image
 
 from config import TEMPLATE_PATH, OUTPUT_DIR, PRODUCTS_JSON_URL
 
@@ -254,6 +255,26 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
     # Update date in K18
     current_date = datetime.now().strftime("%d/%m/%y")
     ws.cell(row=18, column=11, value=f"თარიღი: {current_date}")
+
+    # Remove any existing images to avoid duplicates
+    if hasattr(ws, "_images"):
+        del ws._images[:]
+
+    # Insert logo (A1:F1 merged range)
+    logo_path = os.path.join(os.path.dirname(TEMPLATE_PATH), "logo.png")
+    if os.path.exists(logo_path):
+        img_logo = Image(logo_path)
+        ws.add_image(img_logo, "A1")
+        img_logo.width = 200
+        img_logo.height = 80
+
+    # Insert signature (A17:E17 merged range)
+    sig_path = os.path.join(os.path.dirname(TEMPLATE_PATH), "signature.png")
+    if os.path.exists(sig_path):
+        img_sig = Image(sig_path)
+        ws.add_image(img_sig, "A17")
+        img_sig.width = 150
+        img_sig.height = 50
 
     # Save as new file
     safe_name = _sanitize_filename(client_info)

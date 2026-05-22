@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 bot.log
 generated_invoices/
+

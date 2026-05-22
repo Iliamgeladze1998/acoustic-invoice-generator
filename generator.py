@@ -239,9 +239,9 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
         ws.cell(row=row, column=2, value=prod["name"])     # B: full title
         ws.cell(row=row, column=9, value=qty)              # I: qty
         ws.cell(row=row, column=10, value=price)           # J: unit price
-        ws.cell(row=row, column=10).number_format = '#,##0'  # J: numeric format
+        ws.cell(row=row, column=10).number_format = '#,##0 ₾'  # J: numeric format with Georgian Lari
         ws.cell(row=row, column=11, value=line_total)       # K: line total (calculated in Python)
-        ws.cell(row=row, column=11).number_format = '#,##0'  # K: numeric format
+        ws.cell(row=row, column=11).number_format = '#,##0 ₾'  # K: numeric format with Georgian Lari
 
     # Auto-fit column widths for J and K
     ws.column_dimensions['J'].width = 15
@@ -250,7 +250,7 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
     # Calculate and write Grand Total to K13
     grand_total = sum(item.get("qty", 0) * prod["price"] for item, prod in zip(items, resolved))
     ws.cell(row=13, column=11, value=grand_total)  # K13: Grand Total
-    ws.cell(row=13, column=11).number_format = '#,##0'  # K13: numeric format
+    ws.cell(row=13, column=11).number_format = '#,##0 ₾'  # K13: numeric format with Georgian Lari
 
     # Update date in K18
     current_date = datetime.now().strftime("%d/%m/%y")
@@ -260,21 +260,23 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
     if hasattr(ws, "_images"):
         del ws._images[:]
 
-    # Insert logo (A1:F1 merged range)
+    # Insert logo - anchor to B1 and size to fit B1:G4 range
     logo_path = os.path.join(os.path.dirname(TEMPLATE_PATH), "logo.png")
     if os.path.exists(logo_path):
         img_logo = Image(logo_path)
-        ws.add_image(img_logo, "A1")
-        img_logo.width = 200
-        img_logo.height = 80
+        ws.add_image(img_logo, "B1")
+        # Scale to fit B1:G4 range (7 columns, 4 rows) - use conservative sizing
+        img_logo.width = 250
+        img_logo.height = 70
 
-    # Insert signature (A17:E17 merged range)
+    # Insert signature - anchor to B17 and size to fit B17:E18 range
     sig_path = os.path.join(os.path.dirname(TEMPLATE_PATH), "signature.png")
     if os.path.exists(sig_path):
         img_sig = Image(sig_path)
-        ws.add_image(img_sig, "A17")
-        img_sig.width = 150
-        img_sig.height = 50
+        ws.add_image(img_sig, "B17")
+        # Scale to fit B17:E18 range (4 columns, 2 rows) - use conservative sizing
+        img_sig.width = 180
+        img_sig.height = 35
 
     # Save as new file
     safe_name = _sanitize_filename(client_info)

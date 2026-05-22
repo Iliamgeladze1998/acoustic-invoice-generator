@@ -9,6 +9,7 @@ import re
 import asyncio
 from datetime import datetime
 from typing import Any
+import pytz
 
 import aiohttp
 import openpyxl
@@ -252,8 +253,9 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
     ws.cell(row=13, column=11, value=grand_total)  # K13: Grand Total
     ws.cell(row=13, column=11).number_format = '#,##0 ₾'  # K13: numeric format with Georgian Lari
 
-    # Update date in K18
-    current_date = datetime.now().strftime("%d/%m/%y")
+    # Update date in K18 with Asia/Tbilisi timezone
+    tbilisi_tz = pytz.timezone('Asia/Tbilisi')
+    current_date = datetime.now(tbilisi_tz).strftime("%d/%m/%y")
     ws.cell(row=18, column=11, value=f"თარიღი: {current_date}")
 
     # Copy images from template with exact positioning

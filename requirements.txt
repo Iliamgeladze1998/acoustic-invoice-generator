@@ -2,3 +2,4 @@ python-telegram-bot>=20
 openpyxl
 aiohttp
 Pillow
+pytz

@@ -115,27 +115,67 @@ def _extract_price(product: dict) -> float:
     return 0.0
 
 
-async def fetch_product_data(product_id: str | int) -> dict | None:
+def _normalize_code(code: str) -> str:
+    """Remove all non-alphanumeric characters for character-agnostic matching."""
+    return re.sub(r'[^A-Za-z0-9]', '', code)
+
+
+async def fetch_product_data(product_id: str | int) -> dict:
     """
-    Return {'id', 'name', 'price'} for the requested product_id, or None
-    if not found. Matches robustly across string/int IDs.
+    Return {'id', 'name', 'price'} for the requested product_id.
+    Raises ValueError if not found or if multiple variants exist.
+    Uses character-agnostic normalization for flexible matching.
     """
     target = str(product_id).strip()
     if not target:
-        return None
+        raise ValueError("Product code cannot be empty")
+
+    # Normalize target (remove all non-alphanumeric characters)
+    target_norm = _normalize_code(target)
 
     payload = await _load_products()
-    target_norm = target.lstrip("0") or "0"
 
+    # Build a list of all products with their normalized IDs
+    products_with_ids = []
     for product in _iter_products(payload):
         for pid in _extract_ids(product):
-            if pid == target or pid.lstrip("0") == target_norm:
-                return {
-                    "id": pid,
-                    "name": _extract_name(product),
-                    "price": _extract_price(product),
-                }
-    return None
+            pid_norm = _normalize_code(pid)
+            products_with_ids.append({
+                "id": pid,
+                "id_norm": pid_norm,
+                "name": _extract_name(product),
+                "price": _extract_price(product),
+            })
+
+    # Pass B: Look for exact match after normalization
+    for item in products_with_ids:
+        if item["id_norm"] == target_norm:
+            return {
+                "id": item["id"],
+                "name": item["name"],
+                "price": item["price"],
+            }
+
+    # Pass C: Look for startswith (normalized input)
+    candidates = []
+    for item in products_with_ids:
+        if item["id_norm"].startswith(target_norm):
+            candidates.append(item)
+
+    if not candidates:
+        raise ValueError(f"Error: Product code {target} not found in database.")
+
+    # Pass D: If multiple matches, ask user to clarify
+    if len(candidates) > 1:
+        variant_list = ", ".join([f"{c['id']} ({c['name']})" for c in candidates])
+        raise ValueError(f"Found multiple variants for this code: {variant_list}. Please specify which one you meant.")
+
+    # Pass E: Only one match, use it automatically
+    return {
+        "id": candidates[0]["id"],
+        "name": candidates[0]["name"],
+        "price": candidates[0]["price"],
+    }
 
 
 def _sanitize_filename(name: str) -> str:
@@ -157,15 +197,14 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
     # Fetch all products concurrently (single HTTP call, just lookups in cache)
     await _load_products()
     resolved = await asyncio.gather(
-        *(fetch_product_data(it["id"]) for it in items)
+        *(fetch_product_data(it["id"]) for it in items),
+        return_exceptions=True
     )
 
-    missing = [items[i]["id"] for i, r in enumerate(resolved) if r is None]
-    if missing:
-        raise ValueError(
-            "The following product IDs were not found in the live feed: "
-            + ", ".join(missing)
-        )
+    # Check for errors (ValueError from fetch_product_data)
+    for i, result in enumerate(resolved):
+        if isinstance(result, Exception):
+            raise result  # Re-raise the ValueError with the specific message
 
     # Load template directly (no shutil.copy)
     wb = openpyxl.load_workbook(TEMPLATE_PATH)

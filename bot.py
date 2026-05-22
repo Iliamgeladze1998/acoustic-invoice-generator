@@ -25,8 +25,9 @@ logging.basicConfig(
 )
 log = logging.getLogger("acoustic-invoice-bot")
 
-# Matches "13333-1", "13333 - 1", "13333    -    1" etc.
-ITEM_LINE_RE = re.compile(r"^\s*(\d+)\s*[-–—xX×]\s*(\d+)\s*$")
+# Matches "CC546424075DE-2 - 1", "13333 - 1", "CC-5464_24 - 1" etc.
+# Captures everything before the last dash as SKU, and the number after as quantity
+ITEM_LINE_RE = re.compile(r"^(.*)\s*[-–—xX×]\s*(\d+)\s*$")
 
 WELCOME = (
     "👋 გამარჯობა, Irma!\n\n"
@@ -35,12 +36,12 @@ WELCOME = (
     "გამომიგზავნე შეტყობინება ამ ფორმატით:\n\n"
     "```\n"
     "მარნეულის კულტურის ცენტრი\n"
-    "13333 - 1\n"
-    "14522 - 4\n"
+    "CC546424075DE-2 - 1\n"
+    "13333 - 4\n"
     "```\n"
     "• პირველი ხაზი — კლიენტის სახელი\n"
     "• თითო ხაზი = `პროდუქტის_ID - რაოდენობა`\n"
-    "  (გამოყოფა შეიძლება ნებისმიერი რაოდენობის spaces-ით)\n\n"
+    "  (პროდუქტის კოდში შეიძლება ტირები, ქვეები ან სივრციები)\n\n"
     "მე გამოვწევ პროდუქტის სახელს და ფასს ცოცხალი მონაცემებიდან "
     "და გამოგიგზავნი მზა .xlsx ფაილს."
 )
@@ -75,7 +76,13 @@ def _parse_message(text: str) -> tuple[str, list[dict]]:
         if not m:
             bad.append(ln)
             continue
-        pid, qty = m.group(1), int(m.group(2))
+        pid = m.group(1).strip()  # SKU (may contain dashes)
+        qty_str = m.group(2)     # Quantity string
+        try:
+            qty = int(qty_str)
+        except ValueError:
+            bad.append(ln)
+            continue
         if qty <= 0:
             bad.append(ln)
             continue
@@ -85,7 +92,7 @@ def _parse_message(text: str) -> tuple[str, list[dict]]:
         raise ValueError(
             "❗ ვერ გავარჩიე შემდეგი ხაზები:\n• "
             + "\n• ".join(bad)
-            + "\n\nმოსალოდნელი ფორმატია: `13333 - 1`"
+            + "\n\nმოსალოდნელი ფორმატია: `CC546424075DE-2 - 1`"
         )
     if not items:
         raise ValueError("❗ პროდუქტის არცერთი ხაზი არ მოვიდა.")

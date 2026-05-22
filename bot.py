@@ -4,6 +4,7 @@ Telegram bot entry point. python-telegram-bot v20+ async API.
 from __future__ import annotations
 
 import logging
+import os
 import re
 
 from telegram import Update
@@ -137,6 +138,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 caption=f"✅ ინვოისი მზადაა: {client_info}",
             )
         await status.delete()
+        os.remove(path)  # Cleanup: delete generated file after successful send
     except Exception as e:
         log.exception("send failed")
         await status.edit_text(f"❌ ფაილის გაგზავნა ვერ მოხერხდა: {e}")

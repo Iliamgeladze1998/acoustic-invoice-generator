@@ -256,27 +256,21 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
     current_date = datetime.now().strftime("%d/%m/%y")
     ws.cell(row=18, column=11, value=f"თარიღი: {current_date}")
 
+    # Copy images from template with exact positioning
     # Remove any existing images to avoid duplicates
     if hasattr(ws, "_images"):
         del ws._images[:]
-
-    # Insert logo - anchor to B1 and size to fit B1:G4 range
-    logo_path = os.path.join(os.path.dirname(TEMPLATE_PATH), "logo.png")
-    if os.path.exists(logo_path):
-        img_logo = Image(logo_path)
-        ws.add_image(img_logo, "B1")
-        # Scale to fit B1:G4 range (7 columns, 4 rows) - use conservative sizing
-        img_logo.width = 250
-        img_logo.height = 70
-
-    # Insert signature - anchor to B17 and size to fit B17:E18 range
-    sig_path = os.path.join(os.path.dirname(TEMPLATE_PATH), "signature.png")
-    if os.path.exists(sig_path):
-        img_sig = Image(sig_path)
-        ws.add_image(img_sig, "B17")
-        # Scale to fit B17:E18 range (4 columns, 2 rows) - use conservative sizing
-        img_sig.width = 180
-        img_sig.height = 35
+    
+    # Copy images from template to preserve exact positioning
+    # We need to reload the template to get the original images before they were cleared
+    template_wb = openpyxl.load_workbook(TEMPLATE_PATH)
+    template_ws = template_wb.active
+    for template_img in template_ws._images:
+        new_img = Image(template_img.ref)
+        new_img.anchor = template_img.anchor
+        new_img.width = template_img.width
+        new_img.height = template_img.height
+        ws.add_image(new_img)
 
     # Save as new file
     safe_name = _sanitize_filename(client_info)

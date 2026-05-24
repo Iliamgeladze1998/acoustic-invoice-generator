@@ -258,21 +258,37 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
     current_date = datetime.now(tbilisi_tz).strftime("%d/%m/%y")
     ws.cell(row=18, column=11, value=f"თარიღი: {current_date}")
 
-    # Copy images from template with exact positioning
+    # Load images from project folder with exact positioning
     # Remove any existing images to avoid duplicates
     if hasattr(ws, "_images"):
         del ws._images[:]
     
-    # Copy images from template to preserve exact positioning
-    # We need to reload the template to get the original images before they were cleared
+    # Load template to get original image anchors
     template_wb = openpyxl.load_workbook(TEMPLATE_PATH)
     template_ws = template_wb.active
-    for template_img in template_ws._images:
-        new_img = Image(template_img.ref)
-        new_img.anchor = template_img.anchor
-        new_img.width = template_img.width
-        new_img.height = template_img.height
-        ws.add_image(new_img)
+    
+    # Load images from project folder (logo.png and signature.png)
+    # with exact positioning matching the template
+    
+    # Logo: width 689, height 150, col 5, row 0, offset 59194, 301361
+    logo_path = os.path.join(os.path.dirname(TEMPLATE_PATH), "logo.png")
+    if os.path.exists(logo_path) and len(template_ws._images) >= 2:
+        logo_img = Image(logo_path)
+        logo_img.width = 689
+        logo_img.height = 150
+        # Copy anchor from second image in template (logo)
+        logo_img.anchor = template_ws._images[1].anchor
+        ws.add_image(logo_img)
+    
+    # Signature: width 139, height 46, col 7, row 16, offset 52351, 177086
+    signature_path = os.path.join(os.path.dirname(TEMPLATE_PATH), "signature.png")
+    if os.path.exists(signature_path) and len(template_ws._images) >= 1:
+        signature_img = Image(signature_path)
+        signature_img.width = 139
+        signature_img.height = 46
+        # Copy anchor from first image in template (signature)
+        signature_img.anchor = template_ws._images[0].anchor
+        ws.add_image(signature_img)
 
     # Save as new file
     safe_name = _sanitize_filename(client_info)

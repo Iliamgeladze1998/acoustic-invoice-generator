@@ -14,8 +14,29 @@ import pytz
 import aiohttp
 import openpyxl
 from openpyxl.drawing.image import Image
+from openpyxl.cell.cell import MergedCell
 
 from config import TEMPLATE_PATH, OUTPUT_DIR, PRODUCTS_JSON_URL
+
+
+def _safe_cell(ws, row, col):
+    """Return the writable cell at (row, col), routing MergedCell to the range's top-left."""
+    cell = ws.cell(row=row, column=col)
+    if not isinstance(cell, MergedCell):
+        return cell
+    for merged_range in ws.merged_cells.ranges:
+        if cell.coordinate in merged_range:
+            return ws.cell(row=merged_range.min_row, column=merged_range.min_col)
+    return cell
+
+
+def _write_cell(ws, row, col, value=None, number_format=None):
+    """Write value / number_format to a cell, transparently handling merged ranges."""
+    cell = _safe_cell(ws, row, col)
+    if value is not None:
+        cell.value = value
+    if number_format is not None:
+        cell.number_format = number_format
 
 # Cache for the products payload so repeated lookups inside one
 # generate_invoice() call don't hammer the API.
@@ -118,8 +139,8 @@ def _extract_price(product: dict) -> float:
 
 
 def _normalize_code(code: str) -> str:
-    """Remove all non-alphanumeric characters for character-agnostic matching."""
-    return re.sub(r'[^A-Za-z0-9]', '', code)
+    """Remove all non-alphanumeric characters and normalize case for flexible matching."""
+    return re.sub(r'[^A-Za-z0-9]', '', code).upper()
 
 
 async def fetch_product_data(product_id: str | int) -> dict:
@@ -212,8 +233,8 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
     wb = openpyxl.load_workbook(TEMPLATE_PATH)
     ws = wb.active
 
-    # Client name -> A3
-    ws.cell(row=3, column=1, value=client_info)
+    # Client name -> A3 (transparently handles merged cells)
+    _write_cell(ws, 3, 1, value=client_info)
 
     # Items table -> starting row 8, clear rows 8-11 before writing
     START_ROW = 8
@@ -222,7 +243,7 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
     # Clear item table cells (A, B, I, J, K) by setting to empty string
     for r in range(START_ROW, START_ROW + ITEM_TABLE_ROWS):
         for c in (1, 2, 9, 10, 11):
-            ws.cell(row=r, column=c, value="")
+            _write_cell(ws, r, c, value="")
 
     # Write product data
     for idx, (item, prod) in enumerate(zip(items, resolved), start=1):
@@ -236,13 +257,11 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
         price = prod["price"]
         line_total = qty * price
 
-        ws.cell(row=row, column=1, value=idx)              # A: counter
-        ws.cell(row=row, column=2, value=prod["name"])     # B: full title
-        ws.cell(row=row, column=9, value=qty)              # I: qty
-        ws.cell(row=row, column=10, value=price)           # J: unit price
-        ws.cell(row=row, column=10).number_format = '#,##0 ₾'  # J: numeric format with Georgian Lari
-        ws.cell(row=row, column=11, value=line_total)       # K: line total (calculated in Python)
-        ws.cell(row=row, column=11).number_format = '#,##0 ₾'  # K: numeric format with Georgian Lari
+        _write_cell(ws, row, 1, value=idx)              # A: counter
+        _write_cell(ws, row, 2, value=prod["name"])     # B: full title
+        _write_cell(ws, row, 9, value=qty)              # I: qty
+        _write_cell(ws, row, 10, value=price, number_format='#,##0 ₾')   # J: unit price
+        _write_cell(ws, row, 11, value=line_total, number_format='#,##0 ₾')  # K: line total
 
     # Auto-fit column widths for J and K
     ws.column_dimensions['J'].width = 15
@@ -250,13 +269,12 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
 
     # Calculate and write Grand Total to K13
     grand_total = sum(item.get("qty", 0) * prod["price"] for item, prod in zip(items, resolved))
-    ws.cell(row=13, column=11, value=grand_total)  # K13: Grand Total
-    ws.cell(row=13, column=11).number_format = '#,##0 ₾'  # K13: numeric format with Georgian Lari
+    _write_cell(ws, 13, 11, value=grand_total, number_format='#,##0 ₾')  # K13: Grand Total
 
     # Update date in K18 with Asia/Tbilisi timezone
     tbilisi_tz = pytz.timezone('Asia/Tbilisi')
     current_date = datetime.now(tbilisi_tz).strftime("%d/%m/%y")
-    ws.cell(row=18, column=11, value=f"თარიღი: {current_date}")
+    _write_cell(ws, 18, 11, value=f"თარიღი: {current_date}")
 
     # Load images from project folder with exact positioning
     # Remove any existing images to avoid duplicates

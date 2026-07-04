@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 import asyncio
 from datetime import datetime
 from typing import Any
@@ -40,21 +41,26 @@ def _write_cell(ws, row, col, value=None, number_format=None):
 
 # Cache for the products payload so repeated lookups inside one
 # generate_invoice() call don't hammer the API.
+# Expires after CACHE_TTL seconds so long-running bot always serves fresh prices.
 _PRODUCTS_CACHE: dict[str, Any] | None = None
+_PRODUCTS_CACHE_TS: float = 0.0
 _PRODUCTS_LOCK = asyncio.Lock()
+CACHE_TTL = 600  # 10 minutes
 
 
 async def _load_products(force: bool = False) -> Any:
-    """Fetch the full products JSON once and cache it in memory."""
-    global _PRODUCTS_CACHE
+    """Fetch the full products JSON and cache it in memory (with TTL)."""
+    global _PRODUCTS_CACHE, _PRODUCTS_CACHE_TS
     async with _PRODUCTS_LOCK:
-        if _PRODUCTS_CACHE is None or force:
+        expired = (time.monotonic() - _PRODUCTS_CACHE_TS) > CACHE_TTL
+        if _PRODUCTS_CACHE is None or expired or force:
             timeout = aiohttp.ClientTimeout(total=30)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(PRODUCTS_JSON_URL) as resp:
                     resp.raise_for_status()
                     # content_type may not be application/json -> force parse
                     _PRODUCTS_CACHE = await resp.json(content_type=None)
+                    _PRODUCTS_CACHE_TS = time.monotonic()
         return _PRODUCTS_CACHE
 
 
@@ -216,6 +222,15 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
     """
     if not os.path.exists(TEMPLATE_PATH):
         raise FileNotFoundError(f"Template not found: {TEMPLATE_PATH}")
+
+    # The template's item table holds a fixed number of rows; writing more
+    # would overwrite the Grand Total / footer cells below it.
+    MAX_ITEMS = 4
+    if len(items) > MAX_ITEMS:
+        raise ValueError(
+            f"შაბლონში მაქსიმუმ {MAX_ITEMS} პროდუქტი ეტევა, შენ გამოგზავნე {len(items)}. "
+            f"გთხოვ გაყო ინვოისი რამდენიმე ნაწილად."
+        )
 
     # Fetch all products concurrently (single HTTP call, just lookups in cache)
     await _load_products()

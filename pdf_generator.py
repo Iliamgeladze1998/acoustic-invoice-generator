@@ -253,11 +253,11 @@ NUM_TEMPLATE_ROWS = 11
 
 # Char width approximations for DejaVuSans at fontsize=10
 _CHAR_WIDTH = 5.5
-_CHAR_WIDTH_BOLD_16 = 9.0
+_CHAR_WIDTH_BOLD_18 = 10.5
 
 
 def _fmt_price_no_currency(val: float) -> str:
-    return f"{val:,.0f}".replace(",", " ")
+    return f"{val:,.2f}".replace(",", " ")
 
 
 def _split_name(name: str, max_chars: int = 52) -> list[str]:
@@ -356,7 +356,7 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
         # Horizontal grid line at bottom of row
         for x0, x1 in TABLE_X_SEGMENTS:
             page.draw_line(fitz.Point(x0, row_y_next), fitz.Point(x1, row_y_next),
-                           color=TABLE_LINE_COLOR, width=0.5, overlay=True)
+                           color=TABLE_LINE_COLOR, width=0.75, overlay=True)
 
     # 5. Draw bottom section at shifted position
     bottom_line_y = BOTTOM_LINE_Y - shift
@@ -364,7 +364,7 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
     # Horizontal line above bottom section
     for x0, x1 in TABLE_X_SEGMENTS:
         page.draw_line(fitz.Point(x0, bottom_line_y), fitz.Point(x1, bottom_line_y),
-                       color=TABLE_LINE_COLOR, width=0.5, overlay=True)
+                       color=TABLE_LINE_COLOR, width=0.75, overlay=True)
 
     # Left box (bank details)
     bl = BOTTOM_BOX_LEFT
@@ -401,15 +401,15 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
     # Grand total label + amount + ₾
     gt_label_y = GRAND_TOTAL_LABEL_Y - shift
     page.insert_text((360.2, gt_label_y), "სულ გადასახდელი (დღგ-ს ჩათვლით):",
-                     fontname=font_bold, fontsize=10, color=(0,0,0))
+                     fontname=font_bold, fontsize=9.5, color=(0,0,0))
     gt_num_y = GRAND_TOTAL_NUM_Y - shift
     gt_gel_y = GRAND_TOTAL_GEL_Y - shift
     grand_total_str = _fmt_price_no_currency(grand_total)
-    gt_width = len(grand_total_str) * _CHAR_WIDTH_BOLD_16
+    gt_width = len(grand_total_str) * _CHAR_WIDTH_BOLD_18
     page.insert_text((POS_GRAND_TOTAL_NUM_END - gt_width, gt_num_y), grand_total_str,
-                     fontname=font_bold, fontsize=16, color=(0,0,0))
+                     fontname=font_bold, fontsize=18, color=(0,0,0))
     page.insert_text((POS_GRAND_TOTAL_GEL, gt_gel_y), "₾",
-                     fontname=font_gel, fontsize=16, color=(0,0,0))
+                     fontname=font_gel, fontsize=18, color=(0,0,0))
 
     # 6. Write product rows
     y = POS_ITEM_ROW_START_Y
@@ -425,38 +425,38 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
 
         # №
         page.insert_text((POS_ITEM_NUM, y), str(idx),
-                         fontname=font_name, fontsize=10, color=(0,0,0))
+                         fontname=font_bold, fontsize=8.5, color=(0,0,0))
 
         # დასახელება
-        name_lines = _split_name(prod["name"], max_chars=52)
+        name_lines = _split_name(prod["name"], max_chars=58)
         if len(name_lines) == 1:
             page.insert_text((POS_ITEM_NAME, y), name_lines[0],
-                             fontname=font_name, fontsize=10, color=(0,0,0))
+                             fontname=font_name, fontsize=8.5, color=(0,0,0))
         else:
             page.insert_text((POS_ITEM_NAME, y - 3), name_lines[0],
-                             fontname=font_name, fontsize=10, color=(0,0,0))
-            page.insert_text((POS_ITEM_NAME, y + 10), name_lines[1],
-                             fontname=font_name, fontsize=10, color=(0,0,0))
+                             fontname=font_name, fontsize=8.5, color=(0,0,0))
+            page.insert_text((POS_ITEM_NAME, y + 9), name_lines[1],
+                             fontname=font_name, fontsize=8.5, color=(0,0,0))
 
         # რაოდენობა
         page.insert_text((POS_ITEM_QTY, y), str(qty),
-                         fontname=font_name, fontsize=10, color=(0,0,0))
+                         fontname=font_bold, fontsize=8.5, color=(0,0,0))
 
         # ფასი
         price_str = _fmt_price_no_currency(price)
-        text_width = len(price_str) * _CHAR_WIDTH
+        text_width = len(price_str) * 4.7
         page.insert_text((POS_ITEM_PRICE_NUM_END - text_width, y), price_str,
-                         fontname=font_name, fontsize=10, color=(0,0,0))
+                         fontname=font_bold, fontsize=8.5, color=(0,0,0))
         page.insert_text((POS_ITEM_PRICE_GEL, y), "₾",
-                         fontname=font_gel, fontsize=10, color=(0,0,0))
+                         fontname=font_gel, fontsize=8.5, color=(0,0,0))
 
         # ჯამი
         total_str = _fmt_price_no_currency(line_total)
-        text_width2 = len(total_str) * _CHAR_WIDTH
+        text_width2 = len(total_str) * 4.7
         page.insert_text((POS_ITEM_TOTAL_NUM_END - text_width2, y), total_str,
-                         fontname=font_name, fontsize=10, color=(0,0,0))
+                         fontname=font_bold, fontsize=8.5, color=(0,0,0))
         page.insert_text((POS_ITEM_TOTAL_GEL, y), "₾",
-                         fontname=font_gel, fontsize=10, color=(0,0,0))
+                         fontname=font_gel, fontsize=8.5, color=(0,0,0))
 
         y += POS_ITEM_ROW_SPACING
 

@@ -7,6 +7,8 @@ from __future__ import annotations
 import os
 import re
 import time
+import json
+import random
 import asyncio
 from datetime import datetime
 from typing import Any
@@ -18,6 +20,8 @@ from openpyxl.drawing.image import Image
 from openpyxl.cell.cell import MergedCell
 
 from config import TEMPLATE_PATH, OUTPUT_DIR, PRODUCTS_JSON_URL
+
+INVOICE_NUMBERS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "invoice_numbers.json")
 
 
 def _safe_cell(ws, row, col):
@@ -213,6 +217,27 @@ def _sanitize_filename(name: str) -> str:
     return cleaned or "Client"
 
 
+def _generate_invoice_number() -> str:
+    """Generate a unique random invoice number, persisting used numbers to avoid duplicates."""
+    used = set()
+    if os.path.exists(INVOICE_NUMBERS_FILE):
+        try:
+            with open(INVOICE_NUMBERS_FILE, "r", encoding="utf-8") as f:
+                used = set(json.load(f))
+        except (json.JSONDecodeError, IOError):
+            pass
+
+    for _ in range(10000):
+        num = f"INV-{random.randint(100000, 999999)}"
+        if num not in used:
+            used.add(num)
+            with open(INVOICE_NUMBERS_FILE, "w", encoding="utf-8") as f:
+                json.dump(sorted(used), f, indent=2)
+            return num
+
+    raise RuntimeError("Could not generate a unique invoice number after 10000 attempts.")
+
+
 async def generate_invoice(client_info: str, items: list[dict]) -> str:
     """
     Populate the master template with the given client + items, save the
@@ -223,14 +248,10 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
     if not os.path.exists(TEMPLATE_PATH):
         raise FileNotFoundError(f"Template not found: {TEMPLATE_PATH}")
 
-    # The template's item table holds a fixed number of rows; writing more
-    # would overwrite the Grand Total / footer cells below it.
-    MAX_ITEMS = 4
-    if len(items) > MAX_ITEMS:
-        raise ValueError(
-            f"შაბლონში მაქსიმუმ {MAX_ITEMS} პროდუქტი ეტევა, შენ გამოგზავნე {len(items)}. "
-            f"გთხოვ გაყო ინვოისი რამდენიმე ნაწილად."
-        )
+    # The template has 4 item rows (8-11). For more items, we dynamically
+    # insert extra rows and shift the footer down.
+    TEMPLATE_ITEM_ROWS = 4
+    extra_rows = max(0, len(items) - TEMPLATE_ITEM_ROWS)
 
     # Fetch all products concurrently (single HTTP call, just lookups in cache)
     await _load_products()
@@ -248,15 +269,55 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
     wb = openpyxl.load_workbook(TEMPLATE_PATH)
     ws = wb.active
 
+    # If more than 4 items, insert extra rows after row 11
+    START_ROW = 8
+    TEMPLATE_ITEM_ROWS = 4
+    LAST_TEMPLATE_ROW = START_ROW + TEMPLATE_ITEM_ROWS - 1  # row 11
+
+    if extra_rows > 0:
+        insert_at = LAST_TEMPLATE_ROW + 1  # row 12
+
+        # 1. Unmerge all merged cells at or below the insertion point
+        to_remerge = []
+        for mr in list(ws.merged_cells.ranges):
+            if mr.min_row >= insert_at:
+                to_remerge.append((mr.min_row, mr.min_col, mr.max_row, mr.max_col))
+                ws.unmerge_cells(str(mr))
+
+        # 2. Insert rows
+        ws.insert_rows(insert_at, amount=extra_rows)
+
+        # 3. Re-merge with shifted row numbers
+        for min_row, min_col, max_row, max_col in to_remerge:
+            ws.merge_cells(
+                start_row=min_row + extra_rows, start_column=min_col,
+                end_row=max_row + extra_rows, end_column=max_col,
+            )
+
+        # 4. Copy formatting from row 10 (a full item row) to new rows
+        for i in range(extra_rows):
+            new_row = insert_at + i
+            ws.row_dimensions[new_row].height = ws.row_dimensions[10].height
+            for c in range(1, 13):
+                src_cell = ws.cell(row=10, column=c)
+                dst_cell = ws.cell(row=new_row, column=c)
+                if src_cell.has_style:
+                    dst_cell.font = src_cell.font.copy()
+                    dst_cell.border = src_cell.border.copy()
+                    dst_cell.fill = src_cell.fill.copy()
+                    dst_cell.number_format = src_cell.number_format
+            # Add merged cells for B:H and K:L like other item rows
+            ws.merge_cells(start_row=new_row, start_column=2, end_row=new_row, end_column=8)
+            ws.merge_cells(start_row=new_row, start_column=11, end_row=new_row, end_column=12)
+
     # Client name -> A3 (transparently handles merged cells)
     _write_cell(ws, 3, 1, value=client_info)
 
-    # Items table -> starting row 8, clear rows 8-11 before writing
-    START_ROW = 8
-    ITEM_TABLE_ROWS = 4  # rows 8, 9, 10, 11
+    # Items table -> starting row 8, clear all item rows before writing
+    total_item_rows = TEMPLATE_ITEM_ROWS + extra_rows
 
     # Clear item table cells (A, B, I, J, K) by setting to empty string
-    for r in range(START_ROW, START_ROW + ITEM_TABLE_ROWS):
+    for r in range(START_ROW, START_ROW + total_item_rows):
         for c in (1, 2, 9, 10, 11):
             _write_cell(ws, r, c, value="")
 
@@ -282,14 +343,16 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
     ws.column_dimensions['J'].width = 15
     ws.column_dimensions['K'].width = 15
 
-    # Calculate and write Grand Total to K13
+    # Calculate Grand Total — row shifts if we inserted extra rows
+    grand_total_row = 13 + extra_rows
     grand_total = sum(item.get("qty", 0) * prod["price"] for item, prod in zip(items, resolved))
-    _write_cell(ws, 13, 11, value=grand_total, number_format='#,##0 ₾')  # K13: Grand Total
+    _write_cell(ws, grand_total_row, 11, value=grand_total, number_format='#,##0 ₾')
 
-    # Update date in K18 with Asia/Tbilisi timezone
+    # Update date — row shifts if we inserted extra rows
+    date_row = 18 + extra_rows
     tbilisi_tz = pytz.timezone('Asia/Tbilisi')
     current_date = datetime.now(tbilisi_tz).strftime("%d/%m/%y")
-    _write_cell(ws, 18, 11, value=f"თარიღი: {current_date}")
+    _write_cell(ws, date_row, 11, value=f"თარიღი: {current_date}")
 
     # Load images from project folder with exact positioning
     # Remove any existing images to avoid duplicates
@@ -299,10 +362,10 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
     # Load template to get original image anchors
     template_wb = openpyxl.load_workbook(TEMPLATE_PATH)
     template_ws = template_wb.active
-    
+
     # Load images from project folder (logo.png and signature.png)
     # with exact positioning matching the template
-    
+
     # Logo: width 689, height 150, col 5, row 0, offset 59194, 301361
     logo_path = os.path.join(os.path.dirname(TEMPLATE_PATH), "logo.png")
     if os.path.exists(logo_path) and len(template_ws._images) >= 2:
@@ -312,7 +375,7 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
         # Copy anchor from second image in template (logo)
         logo_img.anchor = template_ws._images[1].anchor
         ws.add_image(logo_img)
-    
+
     # Signature: width 139, height 46, col 7, row 16, offset 52351, 177086
     signature_path = os.path.join(os.path.dirname(TEMPLATE_PATH), "signature.png")
     if os.path.exists(signature_path) and len(template_ws._images) >= 1:
@@ -323,8 +386,11 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
         signature_img.anchor = template_ws._images[0].anchor
         ws.add_image(signature_img)
 
-    # Save as new file
+    # Generate unique invoice number
+    invoice_num = _generate_invoice_number()
+
+    # Save as new file with invoice number in filename
     safe_name = _sanitize_filename(client_info)
-    out_path = os.path.abspath(os.path.join(OUTPUT_DIR, f"Invoice_{safe_name}.xlsx"))
+    out_path = os.path.abspath(os.path.join(OUTPUT_DIR, f"Invoice_{invoice_num}_{safe_name}.xlsx"))
     wb.save(out_path)
     return out_path

@@ -460,6 +460,59 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
 
         y += POS_ITEM_ROW_SPACING
 
+    # 7. Merge page 2 content onto page 1 if there's enough space
+    PAGE2_CONTENT_TOP = 70.0
+    PAGE2_CONTENT_BOT = 270.0
+    PAGE2_CONTENT_HEIGHT = PAGE2_CONTENT_BOT - PAGE2_CONTENT_TOP
+
+    bottom_end_y = BOTTOM_BOX_LEFT[3] - shift  # 746.9 - shift
+    available = 841.89 - bottom_end_y - 15  # margin
+
+    if doc.page_count > 1 and available >= PAGE2_CONTENT_HEIGHT:
+        page2 = doc[1]
+        # Place page 2 content right after bottom section
+        target_y = bottom_end_y + 15
+        offset_y = target_y - PAGE2_CONTENT_TOP
+
+        # Copy text spans from page 2 to page 1
+        blocks2 = page2.get_text('dict')['blocks']
+        for b in blocks2:
+            if 'lines' not in b:
+                continue
+            for line in b['lines']:
+                for span in line['spans']:
+                    t = span['text']
+                    if not t.strip() or 'გვერდი' in t:
+                        continue
+                    sx = span['bbox'][0]
+                    sy = span['bbox'][1]
+                    sz = span['size']
+                    sf = span['font']
+                    # Map font names
+                    fn = font_name
+                    if 'Bold' in sf:
+                        fn = font_bold
+                    elif 'Noto' in sf:
+                        fn = font_gel
+                    page.insert_text((sx, sy + offset_y), t,
+                                     fontname=fn, fontsize=sz, color=(0,0,0))
+
+        # Copy images from page 2 to page 1
+        for img in page2.get_images():
+            xref = img[0]
+            rects = page2.get_image_rects(xref)
+            for r in rects:
+                # Extract image and insert at shifted position
+                pix = fitz.Pixmap(doc, xref)
+                if pix.n - pix.alpha > 3:
+                    pix = fitz.Pixmap(fitz.csRGB, pix)
+                img_rect = fitz.Rect(r.x0, r.y0 + offset_y, r.x1, r.y1 + offset_y)
+                page.insert_image(img_rect, pixmap=pix)
+                pix = None
+
+        # Delete page 2
+        doc.delete_page(1)
+
     # Save
     safe_name = _sanitize_filename(client_info)
     out_path = os.path.abspath(os.path.join(OUTPUT_DIR, f"Invoice_{invoice_num}_{safe_name}.pdf"))

@@ -3,3 +3,4 @@ openpyxl
 aiohttp
 Pillow
 pytz
+PyMuPDF

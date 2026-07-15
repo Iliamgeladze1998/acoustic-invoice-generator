@@ -18,7 +18,7 @@ from telegram.ext import (
 )
 
 from config import TELEGRAM_TOKEN
-from generator import generate_invoice
+from pdf_generator import generate_invoice
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",

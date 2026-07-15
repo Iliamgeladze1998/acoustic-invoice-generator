@@ -279,20 +279,35 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
 
         # 1. Unmerge all merged cells at or below the insertion point
         to_remerge = []
+        cell_values = {}  # Store cell values before unmerge
         for mr in list(ws.merged_cells.ranges):
             if mr.min_row >= insert_at:
                 to_remerge.append((mr.min_row, mr.min_col, mr.max_row, mr.max_col))
+                # Store the value from the top-left cell
+                top_left = ws.cell(row=mr.min_row, column=mr.min_col)
+                cell_values[(mr.min_row, mr.min_col)] = top_left.value
                 ws.unmerge_cells(str(mr))
 
         # 2. Insert rows
         ws.insert_rows(insert_at, amount=extra_rows)
 
-        # 3. Re-merge with shifted row numbers
+        # 3. Re-merge with shifted row numbers and preserve row heights
         for min_row, min_col, max_row, max_col in to_remerge:
+            new_min_row = min_row + extra_rows
+            new_max_row = max_row + extra_rows
             ws.merge_cells(
-                start_row=min_row + extra_rows, start_column=min_col,
-                end_row=max_row + extra_rows, end_column=max_col,
+                start_row=new_min_row, start_column=min_col,
+                end_row=new_max_row, end_column=max_col,
             )
+            # Restore the cell value
+            orig_value = cell_values.get((min_row, min_col))
+            if orig_value is not None:
+                ws.cell(row=new_min_row, column=min_col, value=orig_value)
+            # Preserve row heights for the shifted rows
+            for r in range(min_row, max_row + 1):
+                orig_height = ws.row_dimensions[r].height
+                if orig_height:
+                    ws.row_dimensions[r + extra_rows].height = orig_height
 
         # 4. Copy formatting from row 10 (a full item row) to new rows
         for i in range(extra_rows):
@@ -317,9 +332,13 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
     total_item_rows = TEMPLATE_ITEM_ROWS + extra_rows
 
     # Clear item table cells (A, B, I, J, K) by setting to empty string
+    ITEM_ROW_HEIGHT = 22.75
     for r in range(START_ROW, START_ROW + total_item_rows):
         for c in (1, 2, 9, 10, 11):
             _write_cell(ws, r, c, value="")
+        # Ensure all item rows have proper height (row 11 in template is only 7px)
+        if ws.row_dimensions[r].height and ws.row_dimensions[r].height < ITEM_ROW_HEIGHT:
+            ws.row_dimensions[r].height = ITEM_ROW_HEIGHT
 
     # Write product data
     for idx, (item, prod) in enumerate(zip(items, resolved), start=1):
@@ -342,6 +361,23 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
     # Auto-fit column widths for J and K
     ws.column_dimensions['J'].width = 15
     ws.column_dimensions['K'].width = 15
+
+    # Expand the "მადლობა თანამშრომლობისთვის!" merged cell to span more columns
+    # so the text fits without changing column A width
+    # Find the row where "მადლობა" is (template row 17, shifted by extra_rows)
+    thank_you_row = 17 + extra_rows
+    # Unmerge A:E and merge A:K instead
+    for mr in list(ws.merged_cells.ranges):
+        if mr.min_row == thank_you_row and mr.min_col == 1 and mr.max_col == 5:
+            ws.unmerge_cells(str(mr))
+            ws.merge_cells(start_row=thank_you_row, start_column=1, end_row=thank_you_row, end_column=11)  # A:K
+            break
+    # Ensure the row is tall enough for the wrapped text to be fully visible
+    ws.row_dimensions[thank_you_row].height = 40
+
+    # Also ensure the "ანგარიშის ნომრები" row has enough height
+    account_row = 12 + extra_rows
+    ws.row_dimensions[account_row].height = 60
 
     # Calculate Grand Total — row shifts if we inserted extra rows
     grand_total_row = 13 + extra_rows
@@ -382,12 +418,41 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
         signature_img = Image(signature_path)
         signature_img.width = 139
         signature_img.height = 46
-        # Copy anchor from first image in template (signature)
-        signature_img.anchor = template_ws._images[0].anchor
+        # Position signature at I column, 2 rows above დირექტორი line
+        # დირექტორი is at template row 18 (0-indexed 17) + extra_rows
+        # User wants it 2 rows above that = 0-indexed (15 + extra_rows)
+        from openpyxl.drawing.spreadsheet_drawing import OneCellAnchor
+        from copy import deepcopy
+        orig_anchor = template_ws._images[0].anchor
+        if isinstance(orig_anchor, OneCellAnchor):
+            new_anchor = deepcopy(orig_anchor)
+            new_anchor._from.row = 15 + extra_rows  # 0-indexed
+            new_anchor._from.col = 8  # I column (0-indexed)
+            signature_img.anchor = new_anchor
+        else:
+            signature_img.anchor = orig_anchor
         ws.add_image(signature_img)
 
-    # Generate unique invoice number
+    # Generate unique invoice number and write it into the Excel file
     invoice_num = _generate_invoice_number()
+
+    # Write invoice number inside the black banner (A1:F1 merged area)
+    # Unmerge A1:F1, keep "ინვოისი" in A1:C1, put invoice number in D1:H1
+    # so the number sits closer to "ინვოისი" and is fully visible
+    ws.unmerge_cells('A1:F1')
+    ws.merge_cells('A1:C1')
+    ws.merge_cells('D1:H1')
+    a1 = ws.cell(row=1, column=1)
+    # Black background with white text for the whole banner
+    from openpyxl.styles import PatternFill, Font, Alignment
+    black_fill = PatternFill(start_color='FF000000', fill_type='solid')
+    for col in range(1, 9):
+        cell = ws.cell(row=1, column=col)
+        cell.fill = black_fill
+        cell.font = Font(name=a1.font.name, size=a1.font.size, bold=a1.font.bold, color='FFFFFF')
+    d1 = ws.cell(row=1, column=4)
+    d1.value = f"# {invoice_num.replace('INV-', '')}"
+    d1.alignment = Alignment(horizontal='left', vertical='center')
 
     # Save as new file with invoice number in filename
     safe_name = _sanitize_filename(client_info)

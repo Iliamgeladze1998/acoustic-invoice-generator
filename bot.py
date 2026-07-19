@@ -18,7 +18,7 @@ from telegram.ext import (
 )
 
 from config import TELEGRAM_TOKEN
-from pdf_generator import generate_invoice
+from excel_generator import generate_invoice, MAX_ITEMS
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -113,35 +113,52 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     await msg.chat.send_action(ChatAction.UPLOAD_DOCUMENT)
-    status = await msg.reply_text("⏳ ვქმნი ინვოისს, გთხოვ მოიცადო...")
+    total = len(items)
+    num_invoices = (total + MAX_ITEMS - 1) // MAX_ITEMS
+    if num_invoices == 1:
+        await msg.reply_text(f"⏳ ვქმნი ინვოისს, გთხოვ მოიცადო...")
+    else:
+        await msg.reply_text(f"⏳ {total} პროდუქტი — ვქმნი {num_invoices} ინვოისს, გთხოვ მოიცადო...")
 
+    generated_paths = []
     try:
-        path = await generate_invoice(client_info, items)
+        for part_idx in range(num_invoices):
+            chunk = items[part_idx * MAX_ITEMS:(part_idx + 1) * MAX_ITEMS]
+            suffix = f" ({part_idx + 1}/{num_invoices})" if num_invoices > 1 else ""
+            path = await generate_invoice(f"{client_info}{suffix}", chunk)
+            generated_paths.append(path)
     except FileNotFoundError as e:
         log.exception("template missing")
-        await status.edit_text(f"❌ შაბლონის ფაილი ვერ მოიძებნა:\n{e}")
+        await msg.reply_text(f"❌ შაბლონის ფაილი ვერ მოიძებნა:\n{e}")
         return
     except ValueError as e:
         log.warning("invoice error: %s", e)
-        await status.edit_text(f"❌ {e}")
+        await msg.reply_text(f"❌ {e}")
         return
     except Exception as e:
         log.exception("unexpected error")
-        await status.edit_text(f"❌ მოულოდნელი შეცდომა: {e}")
+        await msg.reply_text(f"❌ მოულოდნელი შეცდომა: {e}")
         return
 
-    try:
-        with open(path, "rb") as f:
-            await msg.reply_document(
-                document=f,
-                filename=path.rsplit("/", 1)[-1],
-                caption=f"✅ ინვოისი მზადაა: {client_info}",
-            )
-        await status.delete()
-        os.remove(path)  # Cleanup: delete generated file after successful send
-    except Exception as e:
-        log.exception("send failed")
-        await status.edit_text(f"❌ ფაილის გაგზავნა ვერ მოხერხდა: {e}")
+    for idx, path in enumerate(generated_paths):
+        try:
+            with open(path, "rb") as f:
+                caption = f"✅ ინვოისი მზადაა: {client_info}"
+                if num_invoices > 1:
+                    caption += f" ({idx + 1}/{num_invoices})"
+                await msg.reply_document(
+                    document=f,
+                    filename=path.rsplit("/", 1)[-1],
+                    caption=caption,
+                )
+        except Exception as e:
+            log.exception("send failed")
+            await msg.reply_text(f"❌ ფაილის გაგზავნა ვერ მოხერხდა: {e}")
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
 
 def main() -> None:

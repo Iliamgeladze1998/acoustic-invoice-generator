@@ -19,7 +19,7 @@ _load_env(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 if not TELEGRAM_TOKEN:
     raise RuntimeError("TELEGRAM_TOKEN is not set. Add it to .env or the environment.")
-TEMPLATE_PATH = "/root/Acoustic-Invoice-Bot/ინვოისი - Marneuli.xlsx"
+TEMPLATE_PATH = "/root/Acoustic-Invoice-Bot/ინვოისი - ნიმუში საბოლოო.xlsx"
 OUTPUT_DIR = "/root/Acoustic-Invoice-Bot/generated_invoices"
 PRODUCTS_JSON_URL = "https://acoustic.ge/data/products.json"
 

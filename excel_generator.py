@@ -186,6 +186,11 @@ async def fetch_product_data(product_id: str | int) -> dict:
     }
 
 
+def _filename_client_name(client_info: str) -> str:
+    name = re.sub(r"\s+\(\d+/\d+\)\s*$", "", client_info.strip())
+    return re.sub(r"\s+\d{9}\s*$", "", name).strip() or "Client"
+
+
 def _sanitize_filename(name: str) -> str:
     cleaned = re.sub(r"[\\/:*?\"<>|\r\n\t]+", " ", name).strip()
     cleaned = re.sub(r"\s+", "_", cleaned)
@@ -378,8 +383,9 @@ async def generate_invoice(client_info: str, items: list[dict]) -> str:
         )
 
     # Save
-    safe_name = _sanitize_filename(client_info)
-    out_path = os.path.abspath(os.path.join(OUTPUT_DIR, f"Invoice_{invoice_num}_{safe_name}.xlsx"))
+    safe_name = _sanitize_filename(_filename_client_name(client_info))
+    filename_invoice_num = invoice_num.replace("-", "_")
+    out_path = os.path.abspath(os.path.join(OUTPUT_DIR, f"{filename_invoice_num}_{safe_name}.xlsx"))
     wb.save(out_path)
     wb.close()
     return out_path

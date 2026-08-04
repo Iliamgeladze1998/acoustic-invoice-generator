@@ -54,32 +54,53 @@ GRAND_TOTAL_FILL = "EBF8FA"
 
 
 async def _load_products(force: bool = False) -> Any:
+    """Load products from the shared local cache file.
+
+    The cache is refreshed by a cron job every 30 minutes (see
+    scraper_common/products_cache.py).  The invoice bot never hits
+    acoustic.ge directly – it always reads from the local cache.
+    """
     global _PRODUCTS_CACHE, _PRODUCTS_CACHE_TS
     async with _PRODUCTS_LOCK:
         expired = (time.monotonic() - _PRODUCTS_CACHE_TS) > CACHE_TTL
         if _PRODUCTS_CACHE is None or expired or force:
-            timeout = aiohttp.ClientTimeout(total=30)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(PRODUCTS_JSON_URL) as resp:
-                    resp.raise_for_status()
-                    _PRODUCTS_CACHE = await resp.json(content_type=None)
-                    _PRODUCTS_CACHE_TS = time.monotonic()
+            try:
+                from products_cache import load_products, cache_age_seconds
+            except ImportError:
+                raise RuntimeError(
+                    "scraper_common not on PYTHONPATH – cannot load products cache. "
+                    "Set PYTHONPATH=/root/scraper_common"
+                )
+
+            age = cache_age_seconds()
+            data = load_products(allow_fetch=False)
+            if data is None:
+                raise RuntimeError(
+                    "Products cache is empty. Run: python /root/scraper_common/products_cache.py --refresh"
+                )
+            _PRODUCTS_CACHE = data
+            _PRODUCTS_CACHE_TS = time.monotonic()
+            if age is not None:
+                print(f"[invoice] loaded products from cache (age: {age:.0f}s)", flush=True)
         return _PRODUCTS_CACHE
 
 
 def _iter_products(payload: Any):
+    def _is_active(item: dict) -> bool:
+        return item.get("status", "A") != "D"
+
     if isinstance(payload, list):
         for item in payload:
-            if isinstance(item, dict):
+            if isinstance(item, dict) and _is_active(item):
                 yield item
     elif isinstance(payload, dict):
         if "products" in payload and isinstance(payload["products"], list):
             for item in payload["products"]:
-                if isinstance(item, dict):
+                if isinstance(item, dict) and _is_active(item):
                     yield item
             return
         for key, item in payload.items():
-            if isinstance(item, dict):
+            if isinstance(item, dict) and _is_active(item):
                 item.setdefault("_key", key)
                 yield item
 

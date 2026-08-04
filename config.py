@@ -1,4 +1,10 @@
 import os
+import sys
+
+# Ensure scraper_common is importable for products_cache
+_scraper_common = "/root/scraper_common"
+if _scraper_common not in sys.path:
+    sys.path.insert(0, _scraper_common)
 
 
 def _load_env(path: str) -> None:
